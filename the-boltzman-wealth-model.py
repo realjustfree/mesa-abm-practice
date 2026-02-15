@@ -1,55 +1,56 @@
 """
-Pratice for Agent-Based Modeling using Mesa Lib.
+Practice for Agent-Based Modeling using Mesa Lib.
 
-Implented based on the lecture : https://mesa.readthedocs.io/latest/tutorials/0_first_model.html
+Implented based on the lecture :
+    https://mesa.readthedocs.io/latest/tutorials/0_first_model.html
+    https://mesa.readthedocs.io/latest/tutorials/1_adding_space.html
 
 Started : 2026-02-09
+"""
 
-""" # 불필요한 임포트 제거
+
 
 # lib
-
 import mesa
+from mesa.discrete_space import CellAgent, OrthogonalMooreGrid
 import seaborn as sns
 
 import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas as pd
+from matplotlib.pyplot import title
+from networkx.algorithms.tree import to_prufer_sequence
 
 
-class MoneyAgent(mesa.Agent):
+
+class MoneyAgent(CellAgent):
     """
 
     """
 
-    def __init__(self, model, unique_id): # unique_id 추가
+    def __init__(self, model, cell):
         super().__init__(model)
-
+        self.cell = cell
         self.wealth = 1
 
-    def say_wealth(self):
-        print(f'my wealth is {self.wealth}')
+    def move(self):
+        self.cell = self.cell.neighborhood.select_random_cell()
+    def give_money(self):
+        cellmates=[a for a in self.cell.agents if a is not self]
 
-    def say_hi(self):
-        print(f'Hi! I am agent {self.unique_id}')
+        if self.wealth>0 and cellmates:
+            other_agent = self.random.choice(cellmates)
+            other_agent.wealth += 1
+            self.wealth -= 1
 
-    def exchange(self): # 에이전트의 특정 행동 로직
+    def exchange(self):
         if self.wealth > 0:
-            # 모델의 스케줄러에서 모든 에이전트 목록을 가져옵니다.
-            all_agents = self.model.schedule.agents
-            
-            # 자기 자신을 제외한 다른 에이전트 목록을 만듭니다.
-            other_agents = [agent for agent in all_agents if agent != self]
-
-            if other_agents: # 다른 에이전트가 존재할 경우에만 교환을 시도합니다.
-                other_agent = self.random.choice(other_agents)
-                # MoneyAgent의 wealth는 항상 정수이므로 'is not None' 검사는 불필요합니다.
+            other_agent = self.random.choice(self.model.agents)
+            if other_agent.wealth is not None:
                 self.wealth -= 1
                 other_agent.wealth += 1
 
-    def step(self): # 에이전트의 step 메서드 (스케줄러에 의해 호출됨)
-        self.exchange()
 
 
 class MoneyModel(mesa.Model):
@@ -57,46 +58,63 @@ class MoneyModel(mesa.Model):
 
     """
 
-    def __init__(self, n=10, seed=None):
+    def __init__(self, n, width, height, seed=None):
         super().__init__(seed=seed)
-        # 스케줄러를 초기화합니다. RandomActivation은 에이전트들을 무작위 순서로 활성화합니다.
-        self.schedule = mesa.time.RandomActivation(self)
         self.num_agents = n
+        self.grid = OrthogonalMooreGrid((width, height), torus=True, random=self.random)
 
-        # 반복문을 통해 MoneyAgent 인스턴스를 생성하고 스케줄러에 추가합니다.
-        for i in range(self.num_agents):
-            a = MoneyAgent(self, i) # 모델과 unique_id 전달
-            self.schedule.add(a)
+        agents = MoneyAgent.create_agents(
+        self,
+        self.num_agents,
+        self.random.choices(self.grid.all_cells.cells, k=self.num_agents),)
 
     def step(self) -> None:
-        # 모델의 step 메서드는 스케줄러의 step 메서드를 호출합니다.
-        # 스케줄러는 등록된 모든 에이전트의 step() 메서드를 호출합니다.
-        self.schedule.step()
+        self.agents.shuffle_do("move")
+        self.agents.do("give_money")
 
 
 def main():
 
-    all_wealth = []
+    # all_wealth = []
+    #
+    # for _ in range(1000):
+    #     test_agent = MoneyModel(n=100)
+    #
+    #     for _ in range(300):
+    #         test_agent.step()
+    #
+    #     for i in test_agent.agents:
+    #         all_wealth.append(i.wealth)
+    #
+    #
+    # g = sns.histplot(all_wealth, discrete=True)
+    # g.set(
+    #     title="Wealth distribution",
+    #     xlabel="Wealth",
+    #     ylabel="number of agents")
+    #
+    # # wealth의 최소값과 최대값 사이의 모든 정수를 틱으로 설정합니다.
+    # g.set_xticks(range(min(all_wealth), max(all_wealth) + 1))
+    # plt.show()
 
-    for _ in range(1000):
-        test_agent = MoneyModel(n=100)
+    model = MoneyModel(1000, 10,10)
 
-        for _ in range(300):
-            test_agent.step()
+    for _ in range(10000):
+        model.step()
 
-        # 모델의 스케줄러를 통해 에이전트에 접근합니다.
-        for i in test_agent.schedule.agents:
-            all_wealth.append(i.wealth)
+    agent_counts = np.zeros((model.grid.width, model.grid.height))
+    agent_wealth_sum = np.zeros((model.grid.width, model.grid.height))
+    sum=0
+    for cell in model.grid.all_cells:
+        agent_counts[cell.coordinate] = len(cell.agents)
+        agent_wealth_sum[cell.coordinate] = np.sum([agent.wealth for agent in cell.agents])
+        print(np.sum(agent_wealth_sum))
 
-    g = sns.histplot(all_wealth, discrete=True)
-    g.set(
-        title="Wealth distribution",
-        xlabel="Wealth",
-        ylabel="number of agents")
 
-    # wealth의 최소값과 최대값 사이의 모든 정수를 틱으로 설정합니다.
-    g.set_xticks(range(min(all_wealth), max(all_wealth) + 1))
+    g = sns.heatmap(agent_wealth_sum, cmap='viridis', cbar=False, square=True, annot=True)
+    g.figure.set_size_inches(5,5)
+    g.set(title="Number of agents on each cell of the grid")
+
     plt.show()
-
 if __name__ == '__main__':
     main()
