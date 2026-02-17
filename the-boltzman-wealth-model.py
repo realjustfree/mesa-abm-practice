@@ -12,14 +12,26 @@ Started : 2026-02-09
 
 # lib
 import mesa
+import solara
 from mesa.discrete_space import CellAgent, OrthogonalMooreGrid
-import seaborn as sns
 
 import matplotlib.pyplot as plt
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from matplotlib.pyplot import title
+
+# Check Mesa version for visualization compatibility
+if mesa.__version__.startswith(("3.0", "3.1", "3.2")):
+    print(
+        f"⚠️  Mesa {mesa.__version__} detected. Visualization features require Mesa 3.3+"
+    )
+    print("To upgrade: pip install --upgrade mesa")
+
+from mesa.visualization import SolaraViz, SpaceRenderer, make_plot_component, make_space_component
+from mesa.visualization.components import AgentPortrayalStyle
+
 
 # Helper function
 # compute Gini coefficient
@@ -83,21 +95,44 @@ def data_visualize(model):
 
 def data_agent_property(model):
     agent_wealth = model.datacollector.get_agent_vars_dataframe()
-    print(agent_wealth.head())
+    # print(agent_wealth.head())
 
 
-    last_step = agent_wealth.index.get_level_values("Step").max()  # Get the last step
-    end_wealth = agent_wealth.xs(last_step, level="Step")[
-        "Wealth"
-    ]  # Get the wealth of each agent at the last step
-    # Create a histogram of wealth at the last step
-    g = sns.histplot(end_wealth, discrete=True)
-    g.set(
-        title="Distribution of wealth at the end of simulation",
-        xlabel="Wealth",
-        ylabel="number of agents",
-    )
+    # last_step = agent_wealth.index.get_level_values("Step").max()  # Get the last step
+    # end_wealth = agent_wealth.xs(last_step, level="Step")[
+    #     "Wealth"
+    # ]  # Get the wealth of each agent at the last step
+    # # Create a histogram of wealth at the last step
+    # g = sns.histplot(end_wealth, discrete=True)
+    # g.set(
+    #     title="Distribution of wealth at the end of simulation",
+    #     xlabel="Wealth",
+    #     ylabel="number of agents",
+    # )
+
+    g = sns.histplot(agent_wealth["Wealth"], discrete=True)
+    g.set(title="Wealth distribution", xlabel="Welath", ylabel="number of agents")
     plt.show()
+
+
+def agent_portrayal(agent):
+    return AgentPortrayalStyle(color="tab:orange", size=50)
+
+# setting for solara
+
+model_params = {
+    "n": {
+        "type": "SliderInt",
+        "value": 50,
+        "label": "Number of agents:",
+        "min": 10,
+        "max": 100,
+        "step": 1,
+    },
+    "width": 10,
+    "height": 10,
+}
+
 
 
 class MoneyAgent(CellAgent):
@@ -116,17 +151,27 @@ class MoneyAgent(CellAgent):
     def give_money(self):
         cellmates=[a for a in self.cell.agents if a is not self]
 
-        if self.wealth>0 and cellmates:
-            other_agent = self.random.choice(cellmates)
-            other_agent.wealth += 1
+        if cellmates:
+            other = self.random.choice(cellmates)
+            other.wealth += 1
             self.wealth -= 1
 
-    def exchange(self):
+        # if self.wealth>0 and cellmates:
+        #     other_agent = self.random.choice(cellmates)
+        #     other_agent.wealth += 1
+        #     self.wealth -= 1
+
+    def step(self):
+        self.move()
         if self.wealth > 0:
-            other_agent = self.random.choice(self.model.agents)
-            if other_agent.wealth is not None:
-                self.wealth -= 1
-                other_agent.wealth += 1
+            self.give_money()
+
+    # def exchange(self):
+    #     if self.wealth > 0:
+    #         other_agent = self.random.choice(self.model.agents)
+    #         if other_agent.wealth is not None:
+    #             self.wealth -= 1
+    #             other_agent.wealth += 1
 
 
 
@@ -135,8 +180,8 @@ class MoneyModel(mesa.Model):
 
     """
 
-    def __init__(self, n, width, height, seed=None):
-        super().__init__(seed=seed)
+    def __init__(self, n=10, width=10, height=10, rng=None, seed=None ):
+        super().__init__(seed=seed, rng=rng)
         self.num_agents = n
         self.grid = OrthogonalMooreGrid((width, height), torus=True, random=self.random)
 
@@ -144,6 +189,7 @@ class MoneyModel(mesa.Model):
         self.datacollector = mesa.DataCollector(
             model_reporters={"Gini": compute_gini}, agent_reporters={"Wealth": "wealth"}
         )
+
 
         # Create agents
         agents = MoneyAgent.create_agents(
@@ -154,19 +200,47 @@ class MoneyModel(mesa.Model):
     def run_for(self, n):
         for _ in range(n):
             self.step()
+
     def step(self) -> None:
         self.datacollector.collect(self)
-        self.agents.shuffle_do("move")
-        self.agents.do("give_money")
+        self.agents.do("step") # Calls the step method for all agents
+
+money_model = MoneyModel(n=50, width=10, height=10)
+#
+# renderer = (
+#     SpaceRenderer(model=money_model, backend="matplotlib")
+#     .setup_agents(agent_portrayal)
+#     .render()
+# )
+
+space_component = make_space_component(
+    agent_portrayal=agent_portrayal,
+    backend="matplotlib",   # 또는 "canvas" 등
+)
+
+GiniPlot = make_plot_component("Gini", page=1)
+
+app = SolaraViz(
+    MoneyModel,
+    components=[space_component, GiniPlot],
+    model_params=model_params,
+    name="Boltzmann Wealth Model",
+)
+
+#def main():
+
+    #model = MoneyModel(100, 10,10, 10)
+    # model.run_for(20)
+    # data_visualize(model)
+    # data_agent_property(model)
 
 
-def main():
 
-    model = MoneyModel(100, 10,10)
-    model.run_for(1000)
-    data_visualize(model)
-    data_agent_property(model)
+    # This is required to render the visualization in the Jupyter notebook
+    # page
+    # return page # Return the SolaraViz page object
 
 
-if __name__ == '__main__':
-    main()
+#if __name__ == '__main__':
+#    solara.display(app)
+#    solara.run()
